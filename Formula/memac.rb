@@ -21,7 +21,7 @@ class Memac < Formula
   desc "Local-first memory layer for AI coding agents"
   homepage "https://github.com/sibyllineX/memac"
   url "https://github.com/sibyllineX/memac/releases/download/v0.1.1/memac-0.1.1.arm64.tar.gz"
-  sha256 "cd352eb9af8df9da5fa8fb6748810a2b980ab83569be97a5367e2cec6eea2985"
+  sha256 "9694c5e85cb98e375a8c8e8b83c31d6f86b07f8e17c9fe80c26429d6ad90d426"
   version "0.1.1"
   license any_of: ["MIT", "Apache-2.0"]
 
