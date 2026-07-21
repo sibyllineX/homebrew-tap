@@ -1,8 +1,10 @@
 # Homebrew formula for memac — local-first memory for AI coding agents (Apple Silicon only).
 #
-# Primary install path is the BINARY BOTTLE (assets baked in, no in-build network, no
-# `--no-sandbox`). The git `url` below is the source-build fallback only; on this private repo it
-# needs auth, but a normal `brew install` pours the bottle and never fetches it.
+# Install path is the SOURCE FORMULA, pinned to a tag+revision: `brew install --no-sandbox` builds
+# from the git checkout (`--no-sandbox` because the in-build `git lfs pull` needs network to
+# materialize the vendored model/dylib/engine — a tarball carries only LFS pointers). A pre-built,
+# release-hosted binary bottle (fast, sandbox-clean pour) is a planned follow-up; the prior bottle
+# was machine-local + stale and was removed here so `brew install` always reflects the tagged code.
 #
 # Principle V (local-first, no egress): NOTHING is fetched from a model hub at build OR run time.
 # ONNX Runtime is linked statically; the daemon loads the bge model + sqlite-vec only from the
@@ -13,15 +15,10 @@
 class Memac < Formula
   desc "Local-first memory layer for AI coding agents"
   homepage "https://github.com/sibyllineX/memac"
-  url "https://github.com/sibyllineX/memac.git", using: :git, tag: "v0.1.0",
-      revision: "53a283bf363a306f426ac62cee1798f6221aad0a"
-  version "0.1.0"
+  url "https://github.com/sibyllineX/memac.git", using: :git, tag: "v0.1.1",
+      revision: "52af186f6fc6a2a6bbce57bd0e490e095f2f4de1"
+  version "0.1.1"
   license any_of: ["MIT", "Apache-2.0"]
-
-  bottle do
-    root_url "file:///Users/tanujsharma/.memac-bottles"
-    sha256 cellar: :any, arm64_tahoe: "247bec25fa86f26bf5cf8340aba730d55e8b3dd294c5bef208ad78e4b3656f7f"
-  end
 
   depends_on "git-lfs" => :build
   depends_on "rust" => :build
@@ -34,7 +31,7 @@ class Memac < Formula
   end
 
   def install
-    # Materialize the LFS-vendored assets (source-build fallback only; the bottle bakes them in).
+    # Materialize the LFS-vendored assets (the engine .a + model + dylib); a tarball has pointers.
     system "git", "lfs", "install", "--local"
     system "git", "lfs", "pull"
 
