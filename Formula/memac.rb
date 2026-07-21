@@ -1,69 +1,52 @@
 # Homebrew formula for memac — local-first memory for AI coding agents (Apple Silicon only).
 #
-# Install path is the SOURCE FORMULA, pinned to a tag+revision: `brew install --no-sandbox` builds
-# from the git checkout (`--no-sandbox` because the in-build `git lfs pull` needs network to
-# materialize the vendored model/dylib/engine — a tarball carries only LFS pointers). A pre-built,
-# release-hosted binary bottle (fast, sandbox-clean pour) is a planned follow-up; the prior bottle
-# was machine-local + stale and was removed here so `brew install` always reflects the tagged code.
+# PREBUILT BINARY BOTTLE. The `url` is a release-hosted tarball of already-built binaries + the
+# vendored runtime assets (bge model, sqlite-vec dylib, the zsh capture hook). There is NO build
+# step here: no git clone, no `git lfs pull`, no cargo/npm, no network beyond fetching the tarball
+# (which Homebrew does pre-sandbox). This sidesteps Homebrew's build sandbox entirely — the reason
+# an asset-heavy, private-LFS project could never `git lfs pull` inside `install`.
 #
-# Principle V (local-first, no egress): NOTHING is fetched from a model hub at build OR run time.
-# ONNX Runtime is linked statically; the daemon loads the bge model + sqlite-vec only from the
-# sha256-verified, locally-staged assets.
+# Principle V (local-first, no egress): the model/dylib ride INSIDE the tarball, sha256-verified by
+# Homebrew on download and again by the daemon at load. Nothing is fetched from a model hub, ever.
+#
+# INSTALL COMMAND: `HOMEBREW_NO_SANDBOX=1 brew install sibyllinex/tap/memac`.
+# The `NO_SANDBOX` is required so `post_install` may write OUTSIDE the Homebrew prefix — it stages
+# the runtime assets into `~/Library/Application Support/mem-mac` and wires the Claude Code hook +
+# MCP into `~/.claude/settings.json` and the shell-capture block into `~/.zshrc`. Homebrew sandboxes
+# post_install by default, which silently blocks those home-dir writes.
 #
 # Naming: the package/command is `memac`; the binaries are still `memmac*` — `bin.install_symlink`
 # aliases `memac` -> `memmac`. The Claude Code hook + MCP keys stay `memmac`.
 class Memac < Formula
   desc "Local-first memory layer for AI coding agents"
   homepage "https://github.com/sibyllineX/memac"
-  url "https://github.com/sibyllineX/memac.git", using: :git, tag: "v0.1.1",
-      revision: "52af186f6fc6a2a6bbce57bd0e490e095f2f4de1"
+  url "https://github.com/sibyllineX/memac/releases/download/v0.1.1/memac-0.1.1.arm64.tar.gz"
+  sha256 "4a7f44ae9a8473bd8e00b7589bcf41e938e74e82154466e9b5b9992326a2744a"
   version "0.1.1"
   license any_of: ["MIT", "Apache-2.0"]
 
-  depends_on "git-lfs" => :build
-  depends_on "rust" => :build
   depends_on arch: :arm64
   depends_on :macos
-  depends_on "node" # post_install reuses the tested TS installer to wire ~/.claude/settings.json
+  depends_on "node" # post_install wires ~/.claude/settings.json via the tested TS installer
 
   def data_root
     Pathname.new(Dir.home)/"Library/Application Support/mem-mac"
   end
 
   def install
-    # Materialize the LFS-vendored assets (the engine .a + model + dylib); a tarball has pointers.
-    #
-    # AUTH INSIDE THE ISOLATED BUILD STEP. Homebrew runs `install` in an isolated environment that
-    # does NOT reliably see the user's global git/ssh config — no url rewrites, no `gh` credential
-    # helper, possibly not even ~/.ssh/config. The source *clone* succeeds (it runs pre-sandbox in
-    # the normal shell); but `git lfs pull` runs HERE, isolated, and can't reach the PRIVATE repo's
-    # LFS objects over HTTPS. So arrange auth LOCALLY in this checkout: rewrite `origin` to SSH, and
-    # point SSH at the key by ABSOLUTE path — the ssh-agent is empty on this machine, so we can't
-    # lean on it, and the build step's HOME may be scrubbed, so we can't lean on ~/.ssh/config
-    # either. `Dir.home` resolves the real user home in the formula even when the subprocess env is
-    # scrubbed, giving a path that works regardless of isolation. `accept-new` handles a build HOME
-    # with no known_hosts; `IdentitiesOnly` avoids "too many auth failures" from other offered keys.
-    system "git", "remote", "set-url", "origin", "git@github.com:sibyllineX/memac.git"
-    ssh_key = "#{Dir.home}/.ssh/id_ed25519"
-    ENV["GIT_SSH_COMMAND"] =
-      "ssh -i #{ssh_key} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
-    system "git", "lfs", "install", "--local"
-    system "git", "lfs", "pull"
-
-    system "cargo", "build", "--release", "--locked"
-    bin.install "target/release/memmacd", "target/release/memmac",
-                "target/release/memmac-mcp", "target/release/memmac-hook"
+    # Prebuilt binaries — just place them. `memac` is the command; the crates stay `memmac*`.
+    bin.install "bin/memmacd", "bin/memmac", "bin/memmac-mcp", "bin/memmac-hook"
     bin.install_symlink "memmac" => "memac"
-
-    cd "installer" do
-      system "npm", "install"
-      system "npm", "run", "build"
-    end
-    libexec.install "installer/dist"
-    (libexec/"assets").install "assets/models", "assets/sqlite-vec"
+    # The compiled TS installer + the runtime assets (model, dylib, zsh capture hook), stashed for
+    # post_install. `memmac-hook.zsh` MUST ship here: the zshrc block `source`s it by this path.
+    libexec.install "dist"
+    (libexec/"assets").install "assets/models", "assets/sqlite-vec", "assets/memmac-hook.zsh"
   end
 
   def post_install
+    # Runs with the REAL user HOME (not a build home), so this stages to the actual data dir and
+    # wires the actual ~/.claude/settings.json + ~/.zshrc. Requires HOMEBREW_NO_SANDBOX=1 (writes
+    # outside the Homebrew prefix).
     assets = data_root/"assets"
     assets.mkpath
     (data_root/"data").mkpath
@@ -71,6 +54,8 @@ class Memac < Formula
     cp_r libexec/"assets/models", assets, remove_destination: true
     cp_r libexec/"assets/sqlite-vec", assets, remove_destination: true
 
+    # Idempotent: preserves your other hooks/servers, and wires the shell-capture block into
+    # ~/.zshrc pointing at libexec/assets/memmac-hook.zsh (the tested TS merge).
     system "node", libexec/"dist/cli.js", "install-hooks", "--bin-dir", opt_bin
   end
 
@@ -85,25 +70,26 @@ class Memac < Formula
 
   def caveats
     <<~EOS
-      memac (Apple Silicon) is installed.
+      memac (Apple Silicon, prebuilt bottle) is installed.
+
+      If you did NOT install with `HOMEBREW_NO_SANDBOX=1`, the hook wiring was likely blocked by
+      Homebrew's post_install sandbox. Wire it manually (idempotent):
+        node #{opt_libexec}/dist/cli.js install-hooks --bin-dir #{opt_bin}
 
       Start the memory daemon (a per-user LaunchAgent):
         brew services start memac
 
-      Then open a NEW Claude Code session in your repo — the SessionStart hook injects your
-      memories. Verify any time with:
+      Then open a NEW Claude Code session in your repo. Verify any time with:
         memac doctor
 
-      Homebrew cannot run scripts on `brew uninstall`, so remove the Claude Code hook + MCP
-      entry first (and stop the daemon with `brew services stop memac`):
+      Homebrew cannot run scripts on `brew uninstall`, so remove the Claude Code hook + MCP entry
+      first (and stop the daemon with `brew services stop memac`):
         node #{opt_libexec}/dist/cli.js uninstall-hooks
     EOS
   end
 
   test do
     assert_path_exists bin/"memmacd"
-    # Exit-code-agnostic: doctor is `ready` (exit 0) on a wired+running install, `not ready`
-    # (exit 1) otherwise — both print the ladder. We assert the ladder renders, not the state.
     assert_match "ladder", shell_output("#{bin}/memac doctor 2>&1 || true")
   end
 end
