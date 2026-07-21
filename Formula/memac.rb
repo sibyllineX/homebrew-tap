@@ -32,6 +32,16 @@ class Memac < Formula
 
   def install
     # Materialize the LFS-vendored assets (the engine .a + model + dylib); a tarball has pointers.
+    #
+    # AUTH INSIDE THE ISOLATED BUILD STEP. Homebrew runs `install` in an isolated environment that
+    # does NOT see the user's global git config — no SSH url rewrites, no `gh` credential helper,
+    # nothing from ~/.gitconfig. The earlier source *clone* succeeds because it runs pre-sandbox in
+    # the normal shell; but `git lfs pull` runs HERE, isolated, and cannot reach the private repo's
+    # LFS objects over HTTPS with credentials it can't see. So arrange auth LOCALLY, in this exact
+    # checkout: rewrite `origin` to SSH so LFS authenticates via the SSH agent (reachable in the
+    # sandbox), and accept-new the host key (the scrubbed build HOME may lack known_hosts).
+    system "git", "remote", "set-url", "origin", "git@github.com:sibyllineX/memac.git"
+    ENV["GIT_SSH_COMMAND"] = "ssh -o StrictHostKeyChecking=accept-new"
     system "git", "lfs", "install", "--local"
     system "git", "lfs", "pull"
 
