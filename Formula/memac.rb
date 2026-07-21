@@ -34,14 +34,19 @@ class Memac < Formula
     # Materialize the LFS-vendored assets (the engine .a + model + dylib); a tarball has pointers.
     #
     # AUTH INSIDE THE ISOLATED BUILD STEP. Homebrew runs `install` in an isolated environment that
-    # does NOT see the user's global git config — no SSH url rewrites, no `gh` credential helper,
-    # nothing from ~/.gitconfig. The earlier source *clone* succeeds because it runs pre-sandbox in
-    # the normal shell; but `git lfs pull` runs HERE, isolated, and cannot reach the private repo's
-    # LFS objects over HTTPS with credentials it can't see. So arrange auth LOCALLY, in this exact
-    # checkout: rewrite `origin` to SSH so LFS authenticates via the SSH agent (reachable in the
-    # sandbox), and accept-new the host key (the scrubbed build HOME may lack known_hosts).
+    # does NOT reliably see the user's global git/ssh config — no url rewrites, no `gh` credential
+    # helper, possibly not even ~/.ssh/config. The source *clone* succeeds (it runs pre-sandbox in
+    # the normal shell); but `git lfs pull` runs HERE, isolated, and can't reach the PRIVATE repo's
+    # LFS objects over HTTPS. So arrange auth LOCALLY in this checkout: rewrite `origin` to SSH, and
+    # point SSH at the key by ABSOLUTE path — the ssh-agent is empty on this machine, so we can't
+    # lean on it, and the build step's HOME may be scrubbed, so we can't lean on ~/.ssh/config
+    # either. `Dir.home` resolves the real user home in the formula even when the subprocess env is
+    # scrubbed, giving a path that works regardless of isolation. `accept-new` handles a build HOME
+    # with no known_hosts; `IdentitiesOnly` avoids "too many auth failures" from other offered keys.
     system "git", "remote", "set-url", "origin", "git@github.com:sibyllineX/memac.git"
-    ENV["GIT_SSH_COMMAND"] = "ssh -o StrictHostKeyChecking=accept-new"
+    ssh_key = "#{Dir.home}/.ssh/id_ed25519"
+    ENV["GIT_SSH_COMMAND"] =
+      "ssh -i #{ssh_key} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
     system "git", "lfs", "install", "--local"
     system "git", "lfs", "pull"
 
